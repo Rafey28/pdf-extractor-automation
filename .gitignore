@@ -1,0 +1,22 @@
+# Python Bytecode
+__pycache__/
+*.pyc
+
+# Virtual Environments (just in case you add one later)
+venv/
+.venv/
+
+# Project Data (Inputs and Outputs)
+data/input_pdfs/*
+data/output/*
+
+# Keep the data folder structure intact, but ignore the files inside
+!data/input_pdfs/.gitkeep
+!data/output/.gitkeep
+
+# Excel Output & Temporary Files
+*.xlsx
+~$*.xlsx
+
+# OS Generated Files
+.DS_Store
