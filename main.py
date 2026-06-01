@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import time
+import tempfile
+import shutil
 from pathlib import Path
 from typing import List
 
@@ -64,66 +67,122 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def export_to_excel(df: pd.DataFrame, output_path: Path) -> None:
-    """Export the DataFrame to Excel and apply professional formatting with openpyxl."""
+def export_to_excel(df: pd.DataFrame, output_path: Path, max_retries: int = 3) -> None:
+    """Export the DataFrame to Excel and apply professional formatting with openpyxl.
+
+    Uses a temporary file to avoid conflicts with the file being open in Excel.
+    Retries up to max_retries times if file operations fail.
+    """
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Save initial DataFrame to Excel with pandas using openpyxl engine.
-    df.to_excel(output_path, index=False, engine="openpyxl")
+    last_error = None
+    for attempt in range(max_retries):
+        temp_path = None
+        try:
+            # Write to a temporary file first
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", dir=output_path.parent, delete=False) as tmp:
+                temp_path = Path(tmp.name)
 
-    # Reopen the workbook with openpyxl to apply styling.
-    workbook = load_workbook(output_path)
-    sheet = workbook.active
+            # Save initial DataFrame to Excel with pandas using openpyxl engine.
+            df.to_excel(temp_path, index=False, engine="openpyxl")
 
-    header_font = Font(bold=True)
-    header_fill = PatternFill(start_color="FFDDDDDD", end_color="FFDDDDDD", fill_type="solid")
-    center_alignment = Alignment(horizontal="center", vertical="center")
+            # Reopen the workbook with openpyxl to apply styling.
+            workbook = load_workbook(temp_path)
+            sheet = workbook.active
 
-    # Style the header row: bold and light gray fill.
-    for cell in sheet[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center_alignment
+            header_font = Font(bold=True)
+            header_fill = PatternFill(start_color="FFDDDDDD", end_color="FFDDDDDD", fill_type="solid")
+            center_alignment = Alignment(horizontal="center", vertical="center")
 
-    # Determine maximum width per column for auto-sizing.
-    for column_cells in sheet.columns:
-        max_length = 0
-        column = column_cells[0].column_letter
-        for cell in column_cells:
-            if cell.value is None:
-                continue
-            cell_value = str(cell.value)
-            max_length = max(max_length, len(cell_value))
-        adjusted_width = max_length + 2
-        sheet.column_dimensions[column].width = adjusted_width
+            # Style the header row: bold and light gray fill.
+            for cell in sheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_alignment
 
-    # Apply number formatting to the Amount column if it exists.
-    amount_column = None
-    for cell in sheet[1]:
-        if str(cell.value).strip().lower() == "amount":
-            amount_column = cell.column_letter
-            break
+            # Determine maximum width per column for auto-sizing.
+            for column_cells in sheet.columns:
+                max_length = 0
+                column = column_cells[0].column_letter
+                for cell in column_cells:
+                    if cell.value is None:
+                        continue
+                    cell_value = str(cell.value)
+                    max_length = max(max_length, len(cell_value))
+                adjusted_width = max_length + 2
+                sheet.column_dimensions[column].width = adjusted_width
 
-    if amount_column:
-        for row in range(2, sheet.max_row + 1):
-            amount_cell = sheet[f"{amount_column}{row}"]
-            amount_cell.number_format = "$#,##0.00"
+            # Apply number formatting to the Amount column if it exists.
+            amount_column = None
+            for cell in sheet[1]:
+                if str(cell.value).strip().lower() == "amount":
+                    amount_column = cell.column_letter
+                    break
 
-    # Center-align the Date column.
-    date_column = None
-    for cell in sheet[1]:
-        if str(cell.value).strip().lower() == "date":
-            date_column = cell.column_letter
-            break
+            if amount_column:
+                for row in range(2, sheet.max_row + 1):
+                    amount_cell = sheet[f"{amount_column}{row}"]
+                    amount_cell.number_format = "$#,##0.00"
 
-    if date_column:
-        for row in range(2, sheet.max_row + 1):
-            date_cell = sheet[f"{date_column}{row}"]
-            date_cell.alignment = center_alignment
+            # Center-align the Date column.
+            date_column = None
+            for cell in sheet[1]:
+                if str(cell.value).strip().lower() == "date":
+                    date_column = cell.column_letter
+                    break
 
-    workbook.save(output_path)
-    logger.info("Exported styled Excel report to %s", output_path)
+            if date_column:
+                for row in range(2, sheet.max_row + 1):
+                    date_cell = sheet[f"{date_column}{row}"]
+                    date_cell.alignment = center_alignment
+
+            workbook.save(temp_path)
+            workbook.close()
+
+            # Use shutil.move which handles Windows file replacement
+            shutil.move(str(temp_path), str(output_path))
+
+            logger.info("Exported styled Excel report to %s", output_path)
+            return
+
+        except PermissionError as e:
+            last_error = e
+            # Clean up temp file if it exists
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "File locked (attempt %d/%d). Waiting %d seconds...",
+                    attempt + 1, max_retries, wait_time
+                )
+                time.sleep(wait_time)
+            else:
+                logger.error(
+                    "Failed to write Excel file after %d attempts. "
+                    "Please close the file if it's open in Excel.",
+                    max_retries
+                )
+        except Exception as e:
+            # Clean up temp file on unexpected error
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+            logger.error("Unexpected error while exporting to Excel: %s", e)
+            raise
+
+    if last_error:
+        raise PermissionError(
+            f"Could not write to {output_path}. The file may be open in Excel. "
+            f"Close it and try again. Error: {last_error}"
+        )
 
 
 def main() -> None:

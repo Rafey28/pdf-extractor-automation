@@ -53,7 +53,7 @@ class PDFInvoiceExtractor:
 
     # Regex patterns
     _DATE_RE = re.compile(
-        r"(?P<date>\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b|\b(?:"
+        r"(?P<date>\b(?:\d{4}[/-]\d{1,2}[/-]\d{1,2})\b|\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b|\b(?:"
         r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
         r"Dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{4})",
